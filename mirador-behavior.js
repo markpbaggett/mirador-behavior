@@ -21,12 +21,17 @@ class MiradorBehavior {
   // Mirador is very often embedded in an iframe (Archipelago, Islandora, etc.)
   static runInIframe = true;
 
+  // Browsertrix calls isMatch() from an init script as soon as each frame's document is
+  // created, before Mirador has rendered, so the DOM can't be used to decide. The URL can.
+  // Add your own pattern here if your viewer lives at a different path.
   static isMatch() {
+    const params = new URLSearchParams(location.search);
     return !!(
+      /mirador/i.test(location.pathname) ||
+      params.has("manifest") ||
+      params.has("iiif-content") ||
       window.Mirador ||
-      document.querySelector(
-        ".mirador-viewer, .mirador-window, #mirador, [id^='mirador' i], script[src*='mirador' i]"
-      )
+      (document.querySelector && document.querySelector(".mirador-viewer, .mirador-window"))
     );
   }
 
@@ -282,12 +287,13 @@ class MiradorBehavior {
       return `${w},`;
     };
 
+    // Mirador also requests a preview from `sizes` even when the service is tiled
+    for (const s of info.sizes || []) {
+      urls.push(`${base}/full/${sizeParam(s.width, s.height)}/0/${quality}`);
+    }
+
     const tileSpec = Array.isArray(info.tiles) && info.tiles[0];
     if (!tileSpec) {
-      // untiled service: only `sizes` are requested
-      for (const s of info.sizes || []) {
-        urls.push(`${base}/full/${sizeParam(s.width, s.height)}/0/${quality}`);
-      }
       return urls.slice(0, maxTiles);
     }
 
@@ -363,13 +369,16 @@ class MiradorBehavior {
     await this.pool(
       [...bases],
       async (base) => {
+        const url = `${base}/info.json`;
         try {
-          const r = await fetch(`${base}/info.json`);
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const info = await r.json();
           infos.push({ base, info });
           ctx.state.infoJson++;
         } catch (e) {
           ctx.state.errors++;
+          this.log(ctx, `Mirador: info.json failed ${url}: ${e && e.message}`);
         }
       },
       this.opts.concurrency
@@ -380,6 +389,13 @@ class MiradorBehavior {
   // Phase 3: click through every canvas of one Mirador window.
   async* walkWindow(ctx, win) {
     const { maxCanvases, zoomSteps } = this.opts;
+
+    this.log(
+      ctx,
+      `Mirador: window ${win.id || "(no id)"}: next button ${this.nextButton(win) ? "found" : "NOT found"}, ` +
+        `prev button ${this.prevButton(win) ? "found" : "NOT found"}, ` +
+        `zoom in ${this.zoomInButton(win) ? "found" : "NOT found"}`
+    );
 
     // rewind to the first canvas
     for (let i = 0; i < maxCanvases; i++) {
@@ -468,7 +484,8 @@ class MiradorBehavior {
     let infos = [];
     if (this.opts.prefetchInfoJson || this.opts.prefetchTiles) {
       const manifests = await this.manifestsFromPage();
-      this.log(ctx, `Mirador: ${manifests.length} manifest(s) found`);
+      const services = manifests.reduce((n, m) => n + this.imageServices(m).length, 0);
+      this.log(ctx, `Mirador: ${manifests.length} manifest(s) found with ${services} image service(s)`);
       infos = await this.loadInfoJsons(ctx, manifests);
       yield ctx.Lib.getState(ctx, `Mirador: fetched ${infos.length} info.json`);
     }

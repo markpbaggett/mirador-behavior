@@ -29,6 +29,15 @@ tiles easily exceeds the default.
 4. Fetches the low-resolution tile pyramid for every canvas using OpenSeadragon's URL scheme
    (IIIF Image API 1/2/3), capped per canvas.
 
+## How it gets matched
+
+Browsertrix calls `isMatch()` from an init script as soon as each frame's document is created,
+before Mirador has rendered. So `isMatch()` is URL-based: a path containing `mirador`, or a
+`manifest` / `iiif-content` query parameter. This matches TAMU Spotlight's viewer iframe
+(`/mirador?manifest=...`). If your viewer is at a different URL, add a pattern to `isMatch()`.
+If no behavior matches, Browsertrix silently falls back to autoscroll
+("Skipping autoscroll..." in the log).
+
 ## Tuning
 
 Edit `opts` at the top of the class: `zoomSteps`, `maxTilesPerCanvas`, `prefetchTiles`,
